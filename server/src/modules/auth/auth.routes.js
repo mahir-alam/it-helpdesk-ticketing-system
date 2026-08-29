@@ -5,11 +5,13 @@ import { requireAuth, signToken } from '../../middleware/auth.js';
 import { loginSchema, registerSchema } from './auth.validation.js';
 import { publicUser, registerUser, verifyCredentials } from './auth.service.js';
 import { recordAudit } from '../../services/auditLog.js';
+import { loginRateLimiter, registerRateLimiter } from '../../middleware/rateLimit.js';
 
 const router = Router();
 
 router.post(
   '/register',
+  registerRateLimiter,
   validate({ body: registerSchema }),
   asyncHandler(async (req, res) => {
     const user = await registerUser(req.body);
@@ -20,6 +22,7 @@ router.post(
 
 router.post(
   '/login',
+  loginRateLimiter,
   validate({ body: loginSchema }),
   asyncHandler(async (req, res) => {
     const user = await verifyCredentials(req.body);

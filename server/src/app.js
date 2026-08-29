@@ -9,6 +9,10 @@ import { errorHandler, notFoundHandler } from './middleware/error.js';
 export function createApp() {
   const app = express();
 
+  // Behind a single hosting proxy (Render/Vercel) — required so req.ip is the
+  // real client address and per-IP rate limiting buckets correctly.
+  app.set('trust proxy', 1);
+
   app.use(helmet());
   app.use(cors({ origin: env.clientUrl === '*' ? true : env.clientUrl.split(','), credentials: true }));
   app.use(express.json({ limit: '1mb' }));
