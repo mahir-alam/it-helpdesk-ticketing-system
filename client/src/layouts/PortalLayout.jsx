@@ -1,5 +1,6 @@
 import { NavLink, Outlet, Link } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.jsx';
+import Breadcrumb from '../components/Breadcrumb.jsx';
 
 export default function PortalLayout() {
   const { user, logout, isStaff } = useAuth();
@@ -43,6 +44,7 @@ export default function PortalLayout() {
         </div>
       </aside>
       <main className="main">
+        <Breadcrumb />
         <Outlet />
       </main>
     </div>

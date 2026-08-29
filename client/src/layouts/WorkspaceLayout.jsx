@@ -1,5 +1,6 @@
 import { NavLink, Outlet, Link } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.jsx';
+import Breadcrumb from '../components/Breadcrumb.jsx';
 
 const link = ({ isActive }) => (isActive ? 'active' : '');
 
@@ -67,6 +68,7 @@ export default function WorkspaceLayout() {
         </div>
       </aside>
       <main className="main">
+        <Breadcrumb />
         <Outlet />
       </main>
     </div>
