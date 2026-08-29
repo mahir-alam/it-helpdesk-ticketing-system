@@ -9,6 +9,12 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    # Placeholder connection strings so `prisma validate` / `prisma generate` can
+    # resolve the env() calls in the datasource block. CI never connects to a
+    # database — the Jest suite runs without one — so these are not secrets.
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci?schema=public
+      DIRECT_URL: postgresql://ci:ci@localhost:5432/ci?schema=public
     steps:
       - uses: actions/checkout@v4
 
