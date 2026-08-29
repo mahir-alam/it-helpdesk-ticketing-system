@@ -1,0 +1,31 @@
+# Render Blueprint — deploys the API. The database is hosted separately on
+# Supabase; set DATABASE_URL / DIRECT_URL / JWT_SECRET / DISCORD_WEBHOOK_URL /
+# INTEGRATION_API_KEY in the Render dashboard (marked sync: false below).
+services:
+  - type: web
+    name: helpdesk-api
+    runtime: docker
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: '4000'
+      - key: ENABLE_CRON
+        value: 'true'
+      - key: CLIENT_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: DISCORD_WEBHOOK_URL
+        sync: false
+      - key: INTEGRATION_API_KEY
+        sync: false

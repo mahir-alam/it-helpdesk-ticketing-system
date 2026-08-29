@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate --workspace server
+
+      - name: Validate Prisma schema
+        run: npx prisma validate --schema server/prisma/schema.prisma
+
+      - name: Lint
+        run: npm run lint --workspaces --if-present
+
+      - name: Run server test suite (priority matrix, RBAC, SLA)
+        run: npm test --workspace server
+
+      - name: Build client
+        run: npm run build --workspace client
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build API image
+        run: docker build -f server/Dockerfile -t helpdesk-api .
+      - name: Build client image
+        run: docker build -f client/Dockerfile -t helpdesk-client .
