@@ -1,0 +1,27 @@
+{
+  "name": "it-helpdesk-ticketing-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "IT Help Desk Ticket Tracker — a hand-coded, single-purpose implementation of ServiceNow-style core ITSM: Incident, Change, Problem, Service Catalog, Asset & Knowledge Management.",
+  "license": "MIT",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,green \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "npm run dev --workspace server",
+    "dev:client": "npm run dev --workspace client",
+    "build": "npm run build --workspace client",
+    "test": "npm run test --workspace server",
+    "prisma:migrate": "npm run prisma:migrate --workspace server",
+    "prisma:seed": "npm run seed --workspace server",
+    "lint": "npm run lint --workspaces --if-present"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

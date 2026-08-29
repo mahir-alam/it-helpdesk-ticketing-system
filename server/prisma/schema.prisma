@@ -1,0 +1,539 @@
+// IT Help Desk Ticket Tracker — Prisma schema
+// A hand-coded, single-purpose implementation of ServiceNow-style core ITSM.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // pooled (pgbouncer)
+  directUrl = env("DIRECT_URL") // direct — migrations
+}
+
+// ─── Enums ──────────────────────────────────────────────
+
+enum Role {
+  END_USER
+  TECHNICIAN
+  ADMIN
+}
+
+enum TicketSource {
+  USER_SUBMITTED
+  SYSTEM_GENERATED
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum Impact {
+  SINGLE_USER
+  DEPARTMENT
+  ENTIRE_COMPANY
+}
+
+enum Urgency {
+  WORKAROUND_AVAILABLE
+  WORK_DEGRADED
+  SYSTEM_DOWN
+}
+
+enum Priority {
+  P1
+  P2
+  P3
+  P4
+}
+
+enum SlaStatus {
+  ON_TRACK
+  RESPONSE_BREACHED
+  RESOLVE_BREACHED
+  MET
+  PAUSED
+}
+
+enum ChangeRisk {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum ChangeStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  ROLLED_BACK
+}
+
+enum ServiceRequestStatus {
+  SUBMITTED
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  IN_FULFILLMENT
+  FULFILLED
+  CANCELLED
+}
+
+enum AssetType {
+  DESKTOP
+  LAPTOP
+  PRINTER
+  VIDEO_CONFERENCING
+  MOBILE_IOS
+  MOBILE_ANDROID
+  MDM_DEVICE
+  NETWORK
+  SERVER
+  PERIPHERAL
+}
+
+enum AssetStatus {
+  IN_USE
+  IN_STOCK
+  IN_REPAIR
+  RETIRED
+}
+
+enum AssetLinkType {
+  CONNECTED_TO
+  DEPENDS_ON
+  RELATED_EQUIPMENT
+  DOCKED_TO
+}
+
+enum ProblemStatus {
+  OPEN
+  INVESTIGATING
+  KNOWN_ERROR
+  RESOLVED
+}
+
+enum TechActionType {
+  PASSWORD_RESET
+  ACCOUNT_UNLOCK
+  NETWORK_DIAGNOSTIC
+  REMOTE_SESSION_STARTED
+  REMOTE_SESSION_ENDED
+  SOFTWARE_REINSTALL
+  HARDWARE_SWAP
+  ESCALATED
+  NOTE
+}
+
+enum WebhookStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+// ─── Identity ───────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role     @default(END_USER)
+  department   String?
+  isOnCall     Boolean  @default(false) // P1 escalation routing target
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  requestedTickets     Ticket[]           @relation("TicketRequester")
+  assignedTickets      Ticket[]           @relation("TicketAssignee")
+  comments             TicketComment[]
+  technicianActions    TechnicianAction[]
+  checklistCompletions ChecklistItem[]    @relation("ChecklistCompletedBy")
+  auditLogs            AuditLog[]
+  assignedAssets       Asset[]            @relation("AssetAssignee")
+  authoredArticles     KnowledgeArticle[]
+  requestedChanges     ChangeRequest[]    @relation("ChangeRequester")
+  approvedChanges      ChangeRequest[]    @relation("ChangeApprover")
+  requestedServices    ServiceRequest[]   @relation("ServiceRequester")
+  approvedServices     ServiceRequest[]   @relation("ServiceApprover")
+  fulfilledServices    ServiceRequest[]   @relation("ServiceFulfiller")
+  reportedProblems     Problem[]          @relation("ProblemReporter")
+  csatRatings          CsatRating[]
+}
+
+// ─── Incident Management ────────────────────────────────
+
+model Ticket {
+  id          String       @id @default(cuid())
+  number      String       @unique // INC-000123
+  title       String
+  description String
+  category    String
+  source      TicketSource @default(USER_SUBMITTED)
+
+  // system_generated tickets may have no logged-in requester
+  requesterId    String?
+  requester      User?   @relation("TicketRequester", fields: [requesterId], references: [id])
+  externalSource String? // e.g. "fleet-asset-tracker"
+  externalRef    String? // caller's own reference id
+
+  assigneeId String?
+  assignee   User?   @relation("TicketAssignee", fields: [assigneeId], references: [id])
+
+  status TicketStatus @default(OPEN)
+
+  // Priority Matrix — impact & urgency are the ONLY inputs; priority is computed backend-side
+  impact   Impact
+  urgency  Urgency
+  priority Priority
+
+  templateId String?
+  template   TicketTemplate? @relation(fields: [templateId], references: [id])
+
+  problemId String?
+  problem   Problem? @relation(fields: [problemId], references: [id])
+
+  // SLA
+  slaResponseDueAt DateTime?
+  slaResolveDueAt  DateTime?
+  slaStatus        SlaStatus @default(ON_TRACK)
+  escalatedAt      DateTime?
+  firstRespondedAt DateTime?
+  resolvedAt       DateTime?
+  closedAt         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  comments          TicketComment[]
+  checklistItems    ChecklistItem[]
+  technicianActions TechnicianAction[]
+  slaEvents         SlaEvent[]
+  csatRating        CsatRating?
+  affectedAssets    TicketAsset[]
+
+  @@index([status])
+  @@index([priority])
+  @@index([category])
+  @@index([assigneeId])
+  @@index([problemId])
+  @@index([createdAt])
+}
+
+model TicketTemplate {
+  id             String   @id @default(cuid())
+  name           String   @unique // "Password Reset", "Printer Offline", "VPN Failure"
+  category       String
+  defaultImpact  Impact
+  defaultUrgency Urgency
+  bodyTemplate   String
+  checklist      String[] // seeds ChecklistItem rows on use
+  createdAt      DateTime @default(now())
+  tickets        Ticket[]
+}
+
+model TicketComment {
+  id         String   @id @default(cuid())
+  ticketId   String
+  ticket     Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId   String?
+  author     User?    @relation(fields: [authorId], references: [id])
+  body       String
+  isInternal Boolean  @default(false) // technician-only note vs visible to requester
+  createdAt  DateTime @default(now())
+
+  @@index([ticketId])
+}
+
+// SOP checklist instance rows attached to a ticket
+model ChecklistItem {
+  id            String    @id @default(cuid())
+  ticketId      String
+  ticket        Ticket    @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  label         String
+  order         Int
+  isDone        Boolean   @default(false)
+  completedById String?
+  completedBy   User?     @relation("ChecklistCompletedBy", fields: [completedById], references: [id])
+  completedAt   DateTime?
+
+  @@index([ticketId])
+}
+
+// SOP templates by category — source for ChecklistItem rows
+model SopTemplate {
+  id       String            @id @default(cuid())
+  category String            @unique // "AD Lockout", "VPN", "Printer"
+  name     String
+  items    SopTemplateItem[]
+}
+
+model SopTemplateItem {
+  id            String      @id @default(cuid())
+  sopTemplateId String
+  sopTemplate   SopTemplate @relation(fields: [sopTemplateId], references: [id], onDelete: Cascade)
+  label         String
+  order         Int
+}
+
+model TechnicianAction {
+  id           String         @id @default(cuid())
+  ticketId     String
+  ticket       Ticket         @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  technicianId String
+  technician   User           @relation(fields: [technicianId], references: [id])
+  actionType   TechActionType
+  notes        String?
+  createdAt    DateTime       @default(now())
+
+  @@index([ticketId])
+}
+
+// ─── SLA ────────────────────────────────────────────────
+
+model SlaPolicy {
+  id              String   @id @default(cuid())
+  priority        Priority @unique
+  responseMinutes Int
+  resolveMinutes  Int
+}
+
+model SlaEvent {
+  id        String   @id @default(cuid())
+  ticketId  String
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  type      String // RESPONSE_BREACH | RESOLVE_BREACH | ESCALATED
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([ticketId])
+}
+
+// ─── Change Management ──────────────────────────────────
+
+model ChangeRequest {
+  id                String       @id @default(cuid())
+  number            String       @unique // CHG-000045
+  title             String
+  description       String
+  riskLevel         ChangeRisk
+  status            ChangeStatus @default(DRAFT)
+  rollbackPlan      String
+  changeWindowStart DateTime?
+  changeWindowEnd   DateTime?
+
+  requestedById String
+  requestedBy   User    @relation("ChangeRequester", fields: [requestedById], references: [id])
+  approvedById  String?
+  approvedBy    User?   @relation("ChangeApprover", fields: [approvedById], references: [id])
+  approvedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  affectedAssets ChangeAsset[]
+
+  @@index([status])
+}
+
+// ─── Service Catalog ───────────────────────────────────
+
+model ServiceCatalogItem {
+  id                 String           @id @default(cuid())
+  name               String           @unique // "New Laptop", "Software Install", "VPN Access"
+  description        String
+  category           String
+  approvalRequired   Boolean          @default(true)
+  fulfillmentSlaDays Int              @default(3)
+  isActive           Boolean          @default(true)
+  createdAt          DateTime         @default(now())
+  requests           ServiceRequest[]
+}
+
+model ServiceRequest {
+  id            String               @id @default(cuid())
+  number        String               @unique // REQ-000078
+  catalogItemId String
+  catalogItem   ServiceCatalogItem   @relation(fields: [catalogItemId], references: [id])
+  requestedById String
+  requestedBy   User                 @relation("ServiceRequester", fields: [requestedById], references: [id])
+  status        ServiceRequestStatus @default(SUBMITTED)
+  approverId    String?
+  approver      User?                @relation("ServiceApprover", fields: [approverId], references: [id])
+  approvedAt    DateTime?
+  fulfilledById String?
+  fulfilledBy   User?                @relation("ServiceFulfiller", fields: [fulfilledById], references: [id])
+  fulfilledAt   DateTime?
+  formData      Json?
+  notes         String?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@index([status])
+}
+
+// ─── Assets / CMDB ─────────────────────────────────────
+
+model Asset {
+  id             String      @id @default(cuid())
+  assetTag       String      @unique
+  name           String
+  type           AssetType
+  status         AssetStatus @default(IN_USE)
+  manufacturer   String?
+  model          String?
+  serialNumber   String?
+  location       String?
+  purchaseDate   DateTime?
+  warrantyExpiry DateTime?
+
+  assignedToId String?
+  assignedTo   User?   @relation("AssetAssignee", fields: [assignedToId], references: [id])
+
+  // CI parent/child (e.g. dock -> laptop, printer -> print server)
+  parentAssetId String?
+  parentAsset   Asset?  @relation("AssetHierarchy", fields: [parentAssetId], references: [id])
+  childAssets   Asset[] @relation("AssetHierarchy")
+
+  // printer fleet / MDM specifics
+  osVersion          String?
+  mdmEnrolled        Boolean   @default(false)
+  driverVersion      String?
+  firmwareVersion    String?
+  lastFirmwareUpdate DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  linksFrom AssetLink[]   @relation("AssetLinkFrom")
+  linksTo   AssetLink[]   @relation("AssetLinkTo")
+  tickets   TicketAsset[]
+  changes   ChangeAsset[]
+
+  @@index([type])
+  @@index([assignedToId])
+}
+
+// generic CI relationships beyond hierarchy
+model AssetLink {
+  id     String        @id @default(cuid())
+  fromId String
+  from   Asset         @relation("AssetLinkFrom", fields: [fromId], references: [id], onDelete: Cascade)
+  toId   String
+  to     Asset         @relation("AssetLinkTo", fields: [toId], references: [id], onDelete: Cascade)
+  type   AssetLinkType
+
+  @@unique([fromId, toId, type])
+}
+
+model TicketAsset {
+  ticketId String
+  ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  assetId  String
+  asset    Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@id([ticketId, assetId])
+}
+
+model ChangeAsset {
+  changeRequestId String
+  changeRequest   ChangeRequest @relation(fields: [changeRequestId], references: [id], onDelete: Cascade)
+  assetId         String
+  asset           Asset         @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@id([changeRequestId, assetId])
+}
+
+// ─── Knowledge Base ────────────────────────────────────
+
+model KnowledgeArticle {
+  id        String   @id @default(cuid())
+  title     String
+  slug      String   @unique
+  body      String
+  category  String
+  keywords  String[]
+  published Boolean  @default(true)
+  viewCount Int      @default(0)
+  authorId  String?
+  author    User?    @relation(fields: [authorId], references: [id])
+  problemId String?
+  problem   Problem? @relation(fields: [problemId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category])
+}
+
+// ─── Problem Management ────────────────────────────────
+
+model Problem {
+  id           String        @id @default(cuid())
+  number       String        @unique // PRB-000012
+  title        String
+  description  String
+  status       ProblemStatus @default(OPEN)
+  category     String
+  keywords     String[]
+  rootCause    String?
+  workaround   String?
+  autoDetected Boolean       @default(false) // flagged by recurring-incident job
+  reportedById String?
+  reportedBy   User?         @relation("ProblemReporter", fields: [reportedById], references: [id])
+  resolvedAt   DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  linkedTickets Ticket[]
+  articles      KnowledgeArticle[]
+
+  @@index([status])
+}
+
+// ─── Audit + CSAT + Webhook log ───────────────────────
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  entityType String // "Ticket" | "ChangeRequest" | "ServiceRequest" | "User" ...
+  entityId   String
+  action     String // "CREATE" | "STATUS_CHANGE" | "PRIORITY_CHANGE" | "ASSIGNMENT_CHANGE" ...
+  field      String?
+  oldValue   String?
+  newValue   String?
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id])
+  actorLabel String? // "system:fleet-asset-tracker" when no actorId
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model CsatRating {
+  id            String   @id @default(cuid())
+  ticketId      String   @unique
+  ticket        Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  score         Int // 1..5, validated in app layer
+  comment       String?
+  submittedById String?
+  submittedBy   User?    @relation(fields: [submittedById], references: [id])
+  createdAt     DateTime @default(now())
+}
+
+model WebhookDelivery {
+  id           String        @id @default(cuid())
+  event        String // "ticket.p1_created"
+  targetUrl    String
+  payload      Json
+  status       WebhookStatus @default(PENDING)
+  responseCode Int?
+  error        String?
+  createdAt    DateTime      @default(now())
+}
