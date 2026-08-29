@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api, errText } from '../../api/client.js';
+import { useAuth } from '../../auth/AuthContext.jsx';
 import {
   useApi,
   Loading,
@@ -28,6 +29,8 @@ const ACTIONS = [
 
 export default function TicketWorkspace() {
   const { id } = useParams();
+  const nav = useNavigate();
+  const { isAdmin } = useAuth();
   const { data: t, loading, error, reload } = useApi(`/tickets/${id}`);
   const { data: audit, reload: reloadAudit } = useApi(`/tickets/${id}/audit`);
   const { data: techs } = useApi('/users/assignable');
@@ -36,6 +39,8 @@ export default function TicketWorkspace() {
   const [internal, setInternal] = useState(true);
   const [rp, setRp] = useState({ impact: '', urgency: '', reason: '' });
   const [action, setAction] = useState({ actionType: 'NOTE', notes: '' });
+  const [confirmText, setConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   if (loading) return <Loading />;
   if (error) return <Alert kind="error">{error}</Alert>;
@@ -56,6 +61,21 @@ export default function TicketWorkspace() {
   };
 
   const rpPreview = previewPriority(rp.impact || t.impact, rp.urgency || t.urgency);
+
+  async function handleDelete() {
+    setMsg(null);
+    setDeleting(true);
+    try {
+      await api.delete(`/tickets/${t.id}`);
+      nav('/workspace/queue', {
+        replace: true,
+        state: { notice: `Ticket ${t.number} was permanently deleted.` },
+      });
+    } catch (e) {
+      setMsg({ kind: 'error', text: errText(e) });
+      setDeleting(false);
+    }
+  }
 
   return (
     <div>
@@ -334,6 +354,34 @@ export default function TicketWorkspace() {
                   <Link to={`/workspace/assets/${a.asset.id}`}>{a.asset.assetTag}</Link> — {a.asset.name}
                 </div>
               ))}
+            </div>
+          )}
+
+          {isAdmin && (
+            <div className="card danger-zone">
+              <h3>Danger zone</h3>
+              <p className="muted small">
+                Permanently delete this ticket and all of its comments, checklist, actions and history.
+                This cannot be undone. The deletion is recorded in the audit log.
+              </p>
+              <div className="field">
+                <label>
+                  Type <strong>{t.number}</strong> to confirm
+                </label>
+                <input
+                  value={confirmText}
+                  onChange={(e) => setConfirmText(e.target.value)}
+                  placeholder={t.number}
+                  autoComplete="off"
+                />
+              </div>
+              <button
+                className="danger"
+                disabled={confirmText.trim() !== t.number || deleting}
+                onClick={handleDelete}
+              >
+                {deleting ? 'Deleting…' : 'Delete ticket'}
+              </button>
             </div>
           )}
         </div>

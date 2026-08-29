@@ -211,6 +211,44 @@ router.patch(
   }),
 );
 
+/* ─── Delete (ADMIN only) — permanent ─────────────────────────────────
+ * requireRole runs before any lookup so a non-admin always gets 403,
+ * whether or not the ticket exists (no existence leak).
+ */
+router.delete(
+  '/:id',
+  requireRole('ADMIN'),
+  asyncHandler(async (req, res) => {
+    const ticket = await prisma.ticket.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, number: true, title: true },
+    });
+    if (!ticket) throw notFound('Ticket not found');
+
+    // Record the deletion BEFORE the row is gone. AuditLog has no FK to Ticket
+    // (entityId is a plain string), so this entry survives the delete and stays
+    // identifiable via the ticket number + title.
+    await recordAudit({
+      entityType: 'Ticket',
+      entityId: ticket.id,
+      action: 'DELETE',
+      field: 'ticket',
+      oldValue: `${ticket.number} — ${ticket.title}`,
+      newValue: null,
+      actor: req.user,
+    });
+
+    // Comments, checklist items, technician actions, SLA events, the CSAT rating
+    // and ticket-asset links all cascade-delete (onDelete: Cascade in the
+    // schema). A linked Problem is referenced only by Ticket.problemId, so
+    // removing the ticket just drops it from problem.linkedTickets — the Problem
+    // record itself is untouched.
+    await prisma.ticket.delete({ where: { id: ticket.id } });
+
+    res.status(204).end();
+  }),
+);
+
 /* ─── Assign (staff) ───────────────────────────────────────────────── */
 router.post(
   '/:id/assign',

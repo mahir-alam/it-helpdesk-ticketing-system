@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import {
   useApi,
   Loading,
@@ -14,6 +14,9 @@ import {
 const EMPTY = { status: '', priority: '', category: '', source: '', q: '', mine: false, unassigned: false, breached: false };
 
 export default function Queue() {
+  const location = useLocation();
+  // one-shot success banner passed via navigation state (e.g. after a delete)
+  const [notice, setNotice] = useState(location.state?.notice ?? null);
   const [f, setF] = useState(EMPTY);
   const qs = useMemo(() => {
     const p = new URLSearchParams({ pageSize: '100', sort: 'createdAt', order: 'desc' });
@@ -33,6 +36,17 @@ export default function Queue() {
         <h1>Ticket queue</h1>
         <span className="muted small">{data?.pagination?.total ?? '—'} matching</span>
       </div>
+
+      {notice && (
+        <Alert kind="success">
+          <span className="spread">
+            {notice}
+            <button className="ghost small" onClick={() => setNotice(null)}>
+              Dismiss
+            </button>
+          </span>
+        </Alert>
+      )}
 
       <div className="filters">
         <div className="field">
